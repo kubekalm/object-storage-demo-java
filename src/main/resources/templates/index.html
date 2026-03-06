@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nimbus Docs</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/css/app.css" />
+  </head>
+  <body>
+    <div class="background-glow"></div>
+    <main class="frame">
+      <section class="hero panel">
+        <p class="eyebrow">Document Workspace</p>
+        <h1>Nimbus Docs</h1>
+        <p class="subtitle">Upload, organize, and manage your files with a clean and focused interface.</p>
+      </section>
+
+      <section class="panel">
+        <form id="upload-form" class="upload-form">
+          <label class="file-picker" for="file-input">
+            <input id="file-input" name="file" type="file" required />
+            <span id="file-label">Choose a document (max 5MB)</span>
+          </label>
+          <button id="upload-button" type="submit">Upload</button>
+        </form>
+        <p id="status" class="status" aria-live="polite"></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Size</th>
+                <th>Uploaded</th>
+                <th class="actions-col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="documents"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <template id="document-row-template">
+      <tr class="doc-row">
+        <td class="doc-name"></td>
+        <td class="doc-size"></td>
+        <td class="doc-date"></td>
+        <td class="actions">
+          <button class="download" type="button">Download</button>
+          <button class="delete" type="button">Delete</button>
+        </td>
+      </tr>
+    </template>
+
+    <script src="/js/app.js" defer></script>
+  </body>
+</html>
