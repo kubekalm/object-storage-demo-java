@@ -1,63 +1,145 @@
-# Object Storage Demo (Java / Spring Boot)
+# Object Storage Add-on Java Developer Tutorial
 
-This is a developer tutorial project showing how to build and deploy a simple document manager app on KubeKALM using an **object-storage add-on**.
+This repository is a practical tutorial for integrating a Java/Spring Boot app with KubeKALM Object Storage.
 
-The UI is intentionally storage-agnostic: end users see documents, not S3 terminology.
+You get:
+- Concept explanation (how the add-on works)
+- Connection/authentication model
+- Java SDK snippets (init, upload, list, download, delete)
+- Full demo app you can build and deploy
 
-## 1) What You Build
+## 1. Core Concepts
 
-A minimal web app with:
-- Upload document (`max 5MB`)
-- List documents
-- Download document
-- Delete document
+KubeKALM Object Storage is S3-compatible but multi-tenant safe by design.
 
-Backend API:
-- `GET /api/health`
-- `GET /api/documents`
-- `POST /api/documents` (`multipart/form-data`, field `file`)
-- `GET /api/documents/{id}/download`
-- `DELETE /api/documents/{id}`
+- Your app talks to an S3-compatible endpoint exposed by KubeKALM.
+- Credentials are issued per add-on binding.
+- The platform enforces tenant/add-on isolation through internal prefixing.
+- Your app should treat it like a regular bucket + key model.
 
-## 2) Prerequisites
+What your app needs to know:
+- Endpoint
+- Access key / secret key
+- Region
+- Bucket
+- Path-style flag
 
-- Docker with buildx
-- Access to `registry.kubekalm.io`
-- KubeKALM control-plane credentials file
-- `curl`, `jq`, `awk`
+What your app does not need:
+- Internal backend bucket details
+- Internal prefix logic
 
-For local run (optional):
-- Java 21
-- Gradle or wrapper-equivalent environment
+## 2. Credentials And Auth Model
 
-## 3) How The App Connects To Object Storage
+When you bind an object-storage add-on to an app, env vars are injected into the app pod:
 
-When you bind an object-storage add-on to the app, KubeKALM injects env vars into the pod:
-
+- `OBJECT_STORAGE_ENDPOINT`
 - `OBJECT_STORAGE_ACCESS_KEY_ID`
 - `OBJECT_STORAGE_SECRET_ACCESS_KEY`
-- `OBJECT_STORAGE_ENDPOINT`
-- `OBJECT_STORAGE_BUCKET`
 - `OBJECT_STORAGE_REGION`
+- `OBJECT_STORAGE_BUCKET`
 - `OBJECT_STORAGE_FORCE_PATH_STYLE`
 
-Compatibility fallbacks are also supported:
+The demo also supports compatibility fallbacks:
 - `S3_*`
-- `AWS_*` credential/region keys
+- `AWS_*` (credentials + region)
 
-## 4) Run Locally
+Authentication is standard S3 Signature V4 (handled by AWS SDK).
+
+## 3. Connect To The S3 URL (Java)
+
+Minimal AWS SDK v2 client setup used by this project:
+
+```java
+S3Client client = S3Client.builder()
+    .region(Region.of(region))
+    .endpointOverride(URI.create(endpoint))
+    .credentialsProvider(StaticCredentialsProvider.create(
+        AwsBasicCredentials.create(accessKeyId, secretAccessKey)
+    ))
+    .serviceConfiguration(S3Configuration.builder()
+        .pathStyleAccessEnabled(forcePathStyle)
+        .chunkedEncodingEnabled(false)
+        .checksumValidationEnabled(false)
+        .build())
+    .build();
+```
+
+Notes:
+- `pathStyleAccessEnabled(true)` is important for many S3-compatible gateways.
+- `chunkedEncodingEnabled(false)` helps compatibility with some non-AWS backends.
+
+## 4. Java Code Snippets
+
+Upload:
+
+```java
+client.putObject(
+    PutObjectRequest.builder()
+        .bucket(bucket)
+        .key("documents/manual.pdf")
+        .contentType("application/pdf")
+        .build(),
+    RequestBody.fromBytes(bytes)
+);
+```
+
+List:
+
+```java
+ListObjectsV2Response out = client.listObjectsV2(
+    ListObjectsV2Request.builder()
+        .bucket(bucket)
+        .prefix("documents/")
+        .build()
+);
+for (S3Object obj : out.contents()) {
+    System.out.println(obj.key() + " (" + obj.size() + ")");
+}
+```
+
+Download:
+
+```java
+ResponseBytes<GetObjectResponse> file = client.getObjectAsBytes(
+    GetObjectRequest.builder()
+        .bucket(bucket)
+        .key("documents/manual.pdf")
+        .build()
+);
+byte[] bytes = file.asByteArray();
+```
+
+Delete:
+
+```java
+client.deleteObject(
+    DeleteObjectRequest.builder()
+        .bucket(bucket)
+        .key("documents/manual.pdf")
+        .build()
+);
+```
+
+## 5. Demo App Architecture
+
+- `DocumentApiController`: REST endpoints for upload/list/download/delete
+- `S3DocumentStorageService`: S3 client + document operations
+- `index.html` + `app.js` + `app.css`: lightweight document manager UI
+
+The UI intentionally says "document" everywhere and hides storage internals.
+
+## 6. Run Locally
 
 ```bash
 cd '/work/object-storage-demo-java'
 gradle --no-daemon bootRun
 ```
 
-Open:
-- `http://localhost:8080`
+Open `http://localhost:8080`.
 
-If object-storage env vars are missing locally, the app still starts, but document operations return a storage-not-configured error.
+If storage env vars are missing, read operations work with clear errors but no uploads will succeed.
 
-## 5) Build And Push Image
+## 7. Build And Push
 
 ```bash
 cd '/work/object-storage-demo-java'
@@ -67,13 +149,13 @@ docker buildx build --platform 'linux/amd64' --push -t "${IMAGE}" '.'
 echo "${IMAGE}"
 ```
 
-## 6) One-Time Bootstrap In KubeKALM
+## 8. Bootstrap On KubeKALM (One Time)
 
-This script creates and wires everything:
-- application
+This script creates:
+- app
 - object-storage add-on
-- app <-> add-on binding
-- deploy token for CI/CD
+- app/add-on binding
+- deploy token
 - initial deploy
 
 ```bash
@@ -84,17 +166,10 @@ IMAGE='registry.kubekalm.io/system/object-storage-docs-demo:<TAG>' \
 ./scripts/bootstrap-kubekalm.sh
 ```
 
-The script stores generated deployment secrets in:
+Generated deployment values are written to:
 - `./.local-secrets/object-storage-docs-demo/<run-id>-bootstrap.env`
 
-That file contains:
-- `KUBEKALM_API_BASE_URL`
-- `KUBEKALM_TENANT_ID`
-- `KUBEKALM_APP_ID`
-- `KUBEKALM_APP_URL`
-- `KUBEKALM_DEPLOY_TOKEN`
-
-## 7) Deploy New Image Manually (Existing App)
+## 9. Deploy Existing App
 
 ```bash
 cd '/work/object-storage-demo-java'
@@ -106,17 +181,12 @@ IMAGE='registry.kubekalm.io/system/object-storage-docs-demo:<TAG>' \
 ./scripts/deploy-kubekalm.sh
 ```
 
-## 8) GitHub CI/CD Tutorial (Auto Deploy On `main`)
+## 10. GitHub CI/CD (Auto Deploy On `main`)
 
-Workflow file:
-- `'.github/workflows/ci-cd.yml'`
+Workflow:
+- `.github/workflows/ci-cd.yml`
 
-Pipeline flow:
-1. Run tests and build jar
-2. Build/push Docker image (`linux/amd64`)
-3. Trigger KubeKALM deploy endpoint with deploy token
-
-Create these repository secrets:
+Required secrets:
 - `REGISTRY_USERNAME`
 - `REGISTRY_PASSWORD`
 - `KUBEKALM_API_BASE_URL`
@@ -124,12 +194,12 @@ Create these repository secrets:
 - `KUBEKALM_APP_ID`
 - `KUBEKALM_DEPLOY_TOKEN`
 
-You can source KubeKALM values from your bootstrap output file under:
-- `./.local-secrets/object-storage-docs-demo/`
+Flow:
+1. Build/test
+2. Build/push image
+3. Trigger `/deploy` with deploy token
 
-## 9) Validate End-To-End
-
-Basic API checks:
+## 11. Quick Validation Commands
 
 ```bash
 APP_URL='https://<your-app>.apps.kubekalm.io'
@@ -137,21 +207,4 @@ curl -sS "${APP_URL}/api/health"
 curl -sS "${APP_URL}/api/documents"
 ```
 
-For full browser flow verification (upload/list/download/delete), use Playwright or your own E2E tool against the deployed URL.
-
-## 10) Code Tour
-
-- `src/main/java/com/kubekalm/sprintdemo/service/S3DocumentStorageService.java`
-  - S3-compatible client setup and document CRUD operations.
-- `src/main/java/com/kubekalm/sprintdemo/controller/DocumentApiController.java`
-  - REST API + error mapping for document actions.
-- `src/main/resources/templates/index.html`
-  - Single-page document manager UI shell.
-- `src/main/resources/static/js/app.js`
-  - Frontend behavior for upload/list/download/delete.
-- `src/main/resources/static/css/app.css`
-  - Visual styling and responsive layout.
-- `scripts/bootstrap-kubekalm.sh`
-  - First-time platform setup automation.
-- `scripts/deploy-kubekalm.sh`
-  - Deploy trigger helper for existing app.
+For full browser validation, run an E2E script (Playwright/Selenium/etc.) that performs upload/list/download/delete.
